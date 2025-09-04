@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # PHP Backend API
+  backend:
+    build: ./backend
+    container_name: faithbit_backend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./backend:/var/www/html
+      - ./logs/backend:/var/log/apache2
+    environment:
+      - DB_HOST=mysql
+      - DB_NAME=faithbit_ssms
+      - DB_USER=faithbit_user
+      - DB_PASSWORD=faithbit_pass
+      - REDIS_HOST=redis
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=faithbit_access
+      - MINIO_SECRET_KEY=faithbit_secret
+    depends_on:
+      - mysql
+      - redis
+      - minio
+    networks:
+      - faithbit_network
+
+  # Vue.js Frontend
+  frontend:
+    build: ./frontend
+    container_name: faithbit_frontend
+    ports:
+      - "3000:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html
+    environment:
+      - VUE_APP_API_BASE_URL=http://localhost:8080/api
+    depends_on:
+      - backend
+    networks:
+      - faithbit_network
+
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: faithbit_mysql
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=faithbit_ssms
+      - MYSQL_USER=faithbit_user
+      - MYSQL_PASSWORD=faithbit_pass
+    networks:
+      - faithbit_network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: faithbit_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - faithbit_network
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: faithbit_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      - MINIO_ROOT_USER=faithbit_access
+      - MINIO_ROOT_PASSWORD=faithbit_secret
+    command: server /data --console-address ":9001"
+    networks:
+      - faithbit_network
+
+  # Background Job Queue Worker
+  queue_worker:
+    build: ./backend
+    container_name: faithbit_queue_worker
+    volumes:
+      - ./backend:/var/www/html
+    environment:
+      - DB_HOST=mysql
+      - DB_NAME=faithbit_ssms
+      - DB_USER=faithbit_user
+      - DB_PASSWORD=faithbit_pass
+      - REDIS_HOST=redis
+    command: php yii queue/listen
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - faithbit_network
+
+volumes:
+  mysql_data:
+  redis_data:
+  minio_data:
+
+networks:
+  faithbit_network:
+    driver: bridge
